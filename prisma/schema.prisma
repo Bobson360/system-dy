@@ -1,0 +1,337 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPERADMIN
+  REVIEWER
+  LAWYER
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_APPROVAL
+  BLOCKED
+}
+
+enum DemandStatus {
+  DRAFT
+  ANALYZING
+  PENDING_REVIEW
+  REVIEWED
+  COMPLETED
+  REJECTED
+}
+
+enum DemandCategory {
+  CIVIL
+  CRIMINAL
+  LABOR
+  FAMILY
+  CONSUMER
+  CORPORATE
+  TAX
+  REAL_ESTATE
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum SubscriptionPlan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum NotificationType {
+  DEMAND_STATUS_CHANGED
+  REVIEW_ASSIGNED
+  REVIEW_COMPLETED
+  PAYMENT_DUE
+  PAYMENT_RECEIVED
+  ACCOUNT_APPROVED
+  ACCOUNT_BLOCKED
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  role         Role
+  status       UserStatus @default(PENDING_APPROVAL)
+
+  firstName String
+  lastName  String
+  phone     String?
+  avatarUrl String?
+
+  refreshToken String?
+  lastLoginAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lawyerProfile   LawyerProfile?
+  clientProfile   ClientProfile?
+  reviewerProfile ReviewerProfile?
+
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+// ─── Lawyer Profile ───────────────────────────────────────────────────────────
+
+model LawyerProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  oabNumber   String  @unique
+  oabState    String
+  specialties String[]
+
+  plan             SubscriptionPlan @default(STARTER)
+  planExpiresAt    DateTime?
+  isAdimplente     Boolean          @default(true)
+
+  clients  ClientProfile[]
+  demands  Demand[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("lawyer_profiles")
+}
+
+// ─── Client Profile ───────────────────────────────────────────────────────────
+
+model ClientProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  lawyerId String
+  lawyer   LawyerProfile @relation(fields: [lawyerId], references: [id])
+
+  cpfCnpj String?
+  address String?
+
+  demands   Demand[]
+  documents Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("client_profiles")
+}
+
+// ─── Reviewer Profile ─────────────────────────────────────────────────────────
+
+model ReviewerProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  specialties DemandCategory[]
+
+  reviews Review[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("reviewer_profiles")
+}
+
+// ─── Demand ───────────────────────────────────────────────────────────────────
+
+model Demand {
+  id       String         @id @default(uuid())
+  title    String
+  body     String
+  category DemandCategory
+  status   DemandStatus   @default(DRAFT)
+
+  lawyerId String
+  lawyer   LawyerProfile @relation(fields: [lawyerId], references: [id])
+
+  clientId String
+  client   ClientProfile @relation(fields: [clientId], references: [id])
+
+  documents   Document[]
+  aiAnalysis  AiAnalysis?
+  review      Review?
+  statusLogs  DemandStatusLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("demands")
+}
+
+// ─── Document ─────────────────────────────────────────────────────────────────
+
+model Document {
+  id String @id @default(uuid())
+
+  demandId String?
+  demand   Demand? @relation(fields: [demandId], references: [id], onDelete: Cascade)
+
+  clientId String?
+  client   ClientProfile? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  fileName     String
+  fileUrl      String
+  fileSize     Int
+  mimeType     String
+  uploadedById String
+
+  createdAt DateTime @default(now())
+
+  @@map("documents")
+}
+
+// ─── AI Analysis ──────────────────────────────────────────────────────────────
+
+model AiAnalysis {
+  id       String @id @default(uuid())
+  demandId String @unique
+  demand   Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+
+  model          String
+  promptTokens   Int
+  outputTokens   Int
+  rawOutput      String
+  parsedSummary  String
+  parsedRisks    String[]
+  parsedActions  String[]
+  confidence     Float?
+
+  isPreliminary    Boolean @default(true)
+  durationMs       Int?
+  estimatedCostUsd Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("ai_analyses")
+}
+
+// ─── Review ───────────────────────────────────────────────────────────────────
+
+model Review {
+  id       String @id @default(uuid())
+  demandId String @unique
+  demand   Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+
+  reviewerId String
+  reviewer   ReviewerProfile @relation(fields: [reviewerId], references: [id])
+
+  approved         Boolean  @default(false)
+  reviewNotes      String?
+  editedSummary    String?
+  editedRisks      String[]
+  editedActions    String[]
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("reviews")
+}
+
+// ─── Demand Status Log ────────────────────────────────────────────────────────
+
+model DemandStatusLog {
+  id       String @id @default(uuid())
+  demandId String
+  demand   Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+
+  fromStatus DemandStatus?
+  toStatus   DemandStatus
+  changedById String
+  reason      String?
+
+  createdAt DateTime @default(now())
+
+  @@map("demand_status_logs")
+}
+
+// ─── Payment ──────────────────────────────────────────────────────────────────
+
+model Payment {
+  id       String @id @default(uuid())
+  lawyerId String
+  lawyer   LawyerProfile @relation(fields: [lawyerId], references: [id])
+
+  amount      Float
+  description String
+  status      PaymentStatus @default(PENDING)
+  dueDate     DateTime
+  paidAt      DateTime?
+
+  externalId    String?
+  externalUrl   String?
+  plan          SubscriptionPlan
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payments")
+}
+
+// ─── Notification ─────────────────────────────────────────────────────────────
+
+model Notification {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    NotificationType
+  title   String
+  body    String
+  isRead  Boolean          @default(false)
+  payload Json?
+
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  action     String
+  entity     String
+  entityId   String?
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}

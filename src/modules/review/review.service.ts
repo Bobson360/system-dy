@@ -43,7 +43,7 @@ export class ReviewService {
             select: { id: true, parsedSummary: true, confidence: true, createdAt: true },
           },
         },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: [{ isPriority: 'desc' }, { updatedAt: 'asc' }],
       }),
       this.prisma.demand.count({ where }),
     ]);

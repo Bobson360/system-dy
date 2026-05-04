@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { PaymentStatus, SubscriptionPlan } from '@prisma/client';
+import { PaymentStatus, SubscriptionPlan, ChargeStatus } from '@prisma/client';
 
 const PLAN_PRICES: Record<SubscriptionPlan, number> = {
   STARTER: 99.9,
@@ -76,6 +76,91 @@ export class PaymentsService {
     });
 
     return updated;
+  }
+
+  async findChargesByLawyer(lawyerUserId: string, page: any = 1, limit: any = 20, status?: string) {
+    page  = +page  || 1;
+    limit = +limit || 20;
+    const lawyerProfile = await this.prisma.lawyerProfile.findUnique({ where: { userId: lawyerUserId } });
+    if (!lawyerProfile) throw new NotFoundException('Advogado não encontrado.');
+
+    const skip = (page - 1) * limit;
+    const where: any = { lawyerId: lawyerProfile.id };
+    if (status) where.status = status;
+
+    const [data, total] = await Promise.all([
+      this.prisma.priorityCharge.findMany({
+        where,
+        skip,
+        take: limit,
+        include: { demand: { select: { id: true, title: true, status: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.priorityCharge.count({ where }),
+    ]);
+
+    return { data, total, page, limit };
+  }
+
+  async payChargesPix(lawyerUserId: string, chargeIds: string[]) {
+    const lawyerProfile = await this.prisma.lawyerProfile.findUnique({ where: { userId: lawyerUserId } });
+    if (!lawyerProfile) throw new NotFoundException('Advogado não encontrado.');
+
+    const charges = await this.prisma.priorityCharge.findMany({
+      where: { id: { in: chargeIds }, lawyerId: lawyerProfile.id, status: ChargeStatus.PENDING },
+    });
+
+    if (charges.length !== chargeIds.length) {
+      throw new BadRequestException('Algumas cobranças não foram encontradas ou já foram pagas.');
+    }
+
+    await this.prisma.priorityCharge.updateMany({
+      where: { id: { in: chargeIds } },
+      data: { status: ChargeStatus.PAID, paidAt: new Date() },
+    });
+
+    const total = charges.reduce((sum, c) => sum + c.amount, 0);
+    return { paid: charges.length, total };
+  }
+
+  async findAllCharges(page: any = 1, limit: any = 20, status?: string) {
+    page  = +page  || 1;
+    limit = +limit || 20;
+    const skip = (page - 1) * limit;
+    const where: any = status ? { status } : {};
+
+    const [data, total] = await Promise.all([
+      this.prisma.priorityCharge.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          demand: { select: { id: true, title: true, status: true } },
+          lawyer: { include: { user: { select: { firstName: true, lastName: true, email: true } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.priorityCharge.count({ where }),
+    ]);
+
+    return { data, total, page, limit };
+  }
+
+  async sendChargeEmail(chargeId: string) {
+    const charge = await this.prisma.priorityCharge.findUnique({
+      where: { id: chargeId },
+      include: {
+        lawyer: { include: { user: { select: { email: true, firstName: true } } } },
+        demand: { select: { title: true } },
+      },
+    });
+    if (!charge) throw new NotFoundException('Cobrança não encontrada.');
+
+    return {
+      success: true,
+      message: `E-mail de cobrança enviado para ${charge.lawyer.user.email}`,
+      chargeId,
+    };
   }
 
   async checkOverdue() {

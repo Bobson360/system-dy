@@ -3,7 +3,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Bot, CheckCircle, XCircle, Clock, Zap, RefreshCw } from 'lucide-react'
+import {
+  ArrowLeft, Bot, CheckCircle, XCircle, Zap, RefreshCw,
+  ClipboardCheck, ChevronDown, ChevronUp,
+} from 'lucide-react'
 import api from '@/lib/api'
 import Topbar from '@/components/dashboard/Topbar'
 import StatusBadge from '@/components/dashboard/StatusBadge'
@@ -15,6 +18,7 @@ interface Demand {
   body: string
   category: string
   status: string
+  isPriority: boolean
   createdAt: string
   client: { id: string; user: { firstName: string; lastName: string; email: string } }
   lawyer: { user: { firstName: string; lastName: string; email: string } }
@@ -43,26 +47,42 @@ interface Demand {
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
-  CIVIL: 'Civil', CRIMINAL: 'Criminal', LABOR: 'Trabalhista', FAMILY: 'Família', CONSUMER: 'Consumidor',
+  CIVIL: 'Civil', CRIMINAL: 'Criminal', LABOR: 'Trabalhista', FAMILY: 'Família',
+  CONSUMER: 'Consumidor', CORPORATE: 'Empresarial', TAX: 'Tributário',
+  REAL_ESTATE: 'Imobiliário', OTHER: 'Outros',
 }
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Rascunho', ANALYZING: 'Analisando', PENDING_REVIEW: 'Aguardando revisão',
-  REVIEWED: 'Revisado', REJECTED: 'Rejeitado', COMPLETED: 'Concluído',
+  REVIEWED: 'Revisado', REJECTED: 'Rejeitado', COMPLETED: 'Concluído', CANCELLED: 'Cancelado',
 }
 
 export default function AdminDemandaDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const [demand, setDemand]       = useState<Demand | null>(null)
-  const [loading, setLoading]     = useState(true)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [error, setError]         = useState('')
-  const [actionMsg, setActionMsg] = useState('')
+  const [demand, setDemand]         = useState<Demand | null>(null)
+  const [loading, setLoading]       = useState(true)
+  const [analyzing, setAnalyzing]   = useState(false)
+  const [error, setError]           = useState('')
+  const [actionMsg, setActionMsg]   = useState('')
+  const [showReview, setShowReview] = useState(false)
+
+  // review form state
+  const [reviewApproved, setReviewApproved]     = useState(true)
+  const [reviewNotes, setReviewNotes]           = useState('')
+  const [editedSummary, setEditedSummary]       = useState('')
+  const [editedRisks, setEditedRisks]           = useState('')
+  const [editedActions, setEditedActions]       = useState('')
+  const [submittingReview, setSubmittingReview] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const { data } = await api.get(`/admin/demands/${id}`)
       setDemand(data)
+      if (data.aiAnalysis) {
+        setEditedSummary(data.review?.editedSummary ?? data.aiAnalysis.parsedSummary ?? '')
+        setEditedRisks((data.review?.editedRisks ?? data.aiAnalysis.parsedRisks ?? []).join('\n'))
+        setEditedActions((data.review?.editedActions ?? data.aiAnalysis.parsedActions ?? []).join('\n'))
+      }
     } catch {
       setError('Demanda não encontrada.')
     } finally {
@@ -83,6 +103,27 @@ export default function AdminDemandaDetailPage() {
       setActionMsg(err.response?.data?.message ?? 'Erro ao executar análise.')
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  async function handleReview() {
+    setSubmittingReview(true)
+    setActionMsg('')
+    try {
+      await api.post(`/admin/demands/${id}/review`, {
+        approved: reviewApproved,
+        reviewNotes: reviewNotes || undefined,
+        editedSummary: editedSummary || undefined,
+        editedRisks:   editedRisks.split('\n').map(s => s.trim()).filter(Boolean),
+        editedActions: editedActions.split('\n').map(s => s.trim()).filter(Boolean),
+      })
+      setActionMsg(reviewApproved ? 'Demanda aprovada com sucesso.' : 'Demanda rejeitada.')
+      setShowReview(false)
+      await load()
+    } catch (err: any) {
+      setActionMsg(err.response?.data?.message ?? 'Erro ao submeter revisão.')
+    } finally {
+      setSubmittingReview(false)
     }
   }
 
@@ -108,6 +149,7 @@ export default function AdminDemandaDetailPage() {
   }
 
   const canAnalyze = ['DRAFT', 'ANALYZING', 'PENDING_REVIEW'].includes(demand.status)
+  const canReview  = demand.status === 'PENDING_REVIEW'
 
   return (
     <div className="flex flex-col">
@@ -116,6 +158,16 @@ export default function AdminDemandaDetailPage() {
         subtitle={`${CATEGORY_LABELS[demand.category] ?? demand.category} · ${new Date(demand.createdAt).toLocaleDateString('pt-BR')}`}
         actions={
           <div className="flex items-center gap-2">
+            {canReview && (
+              <button
+                onClick={() => setShowReview(v => !v)}
+                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
+              >
+                <ClipboardCheck size={14} />
+                Revisar
+                {showReview ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            )}
             {canAnalyze && (
               <button
                 onClick={handleAnalyze}
@@ -141,13 +193,107 @@ export default function AdminDemandaDetailPage() {
           <p className="rounded-lg bg-blue-500/10 px-4 py-3 text-sm text-blue-300">{actionMsg}</p>
         )}
 
+        {/* Review form (admin) */}
+        {showReview && canReview && (
+          <section className="rounded-xl border border-green-500/20 bg-green-500/5 p-6 space-y-4">
+            <h3 className="font-semibold text-white flex items-center gap-2">
+              <ClipboardCheck size={16} className="text-green-400" /> Revisão pelo admin
+            </h3>
+
+            {/* Approve / Reject toggle */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setReviewApproved(true)}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${reviewApproved ? 'bg-green-600 text-white' : 'border border-navy-700 text-navy-400 hover:text-white'}`}
+              >
+                <CheckCircle size={14} /> Aprovar
+              </button>
+              <button
+                onClick={() => setReviewApproved(false)}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${!reviewApproved ? 'bg-red-600 text-white' : 'border border-navy-700 text-navy-400 hover:text-white'}`}
+              >
+                <XCircle size={14} /> Rejeitar
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-navy-400">Notas de revisão</label>
+              <textarea
+                value={reviewNotes}
+                onChange={e => setReviewNotes(e.target.value)}
+                rows={3}
+                placeholder="Observações, justificativa, instruções ao advogado..."
+                className={`${inputCls} resize-none`}
+              />
+            </div>
+
+            {demand.aiAnalysis && (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-navy-400">Resumo editado</label>
+                  <textarea
+                    value={editedSummary}
+                    onChange={e => setEditedSummary(e.target.value)}
+                    rows={4}
+                    className={`${inputCls} resize-none`}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-navy-400">Riscos (um por linha)</label>
+                    <textarea
+                      value={editedRisks}
+                      onChange={e => setEditedRisks(e.target.value)}
+                      rows={4}
+                      className={`${inputCls} resize-none`}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-navy-400">Ações (uma por linha)</label>
+                    <textarea
+                      value={editedActions}
+                      onChange={e => setEditedActions(e.target.value)}
+                      rows={4}
+                      className={`${inputCls} resize-none`}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleReview}
+                disabled={submittingReview}
+                className={`flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold disabled:opacity-60 transition-colors ${reviewApproved ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-red-600 hover:bg-red-500 text-white'}`}
+              >
+                {submittingReview ? <RefreshCw size={14} className="animate-spin" /> : <ClipboardCheck size={14} />}
+                {submittingReview ? 'Enviando...' : (reviewApproved ? 'Confirmar aprovação' : 'Confirmar rejeição')}
+              </button>
+              <button
+                onClick={() => setShowReview(false)}
+                className="rounded-lg border border-navy-700 px-4 py-2 text-sm text-navy-300 hover:text-white transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
             {/* Demand body */}
             <section className="rounded-xl border border-navy-800 bg-navy-900 p-6">
-              <div className="mb-4 flex items-center justify-between">
+              <div className="mb-4 flex items-center gap-2">
                 <h3 className="font-semibold text-white">Descrição</h3>
-                <StatusBadge status={demand.status} />
+                {demand.isPriority && (
+                  <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400">
+                    <Zap size={10} /> Prioritária
+                  </span>
+                )}
+                <div className="ml-auto">
+                  <StatusBadge status={demand.status} />
+                </div>
               </div>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-navy-300">{demand.body}</p>
             </section>
@@ -166,7 +312,6 @@ export default function AdminDemandaDetailPage() {
                   )}
                 </div>
 
-                {/* Metrics */}
                 <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Metric label="Confiança" value={`${Math.round(demand.aiAnalysis.confidence * 100)}%`} />
                   <Metric label="Duração" value={demand.aiAnalysis.durationMs ? `${(demand.aiAnalysis.durationMs / 1000).toFixed(1)}s` : '—'} />
@@ -204,8 +349,7 @@ export default function AdminDemandaDetailPage() {
                     </div>
                   )}
                   <p className="text-xs text-navy-600">
-                    Modelo: {demand.aiAnalysis.model} ·{' '}
-                    {new Date(demand.aiAnalysis.createdAt).toLocaleString('pt-BR')}
+                    Modelo: {demand.aiAnalysis.model} · {new Date(demand.aiAnalysis.createdAt).toLocaleString('pt-BR')}
                   </p>
                 </div>
               </section>
@@ -227,10 +371,12 @@ export default function AdminDemandaDetailPage() {
                 <div className="mb-3 flex items-center gap-2">
                   {demand.review.approved ? <CheckCircle size={18} className="text-green-400" /> : <XCircle size={18} className="text-red-400" />}
                   <h3 className="font-semibold text-white">{demand.review.approved ? 'Revisão aprovada' : 'Revisão rejeitada'}</h3>
-                  {demand.review.reviewer && (
+                  {demand.review.reviewer ? (
                     <span className="ml-auto text-xs text-navy-500">
                       {demand.review.reviewer.user.firstName} {demand.review.reviewer.user.lastName}
                     </span>
+                  ) : (
+                    <span className="ml-auto text-xs text-navy-500">Admin</span>
                   )}
                 </div>
                 {demand.review.reviewNotes && (
@@ -286,3 +432,5 @@ function Metric({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
+const inputCls = 'w-full rounded-lg border border-navy-700 bg-navy-800 px-3 py-2 text-sm text-white placeholder-navy-500 focus:border-gold-500 focus:outline-none'

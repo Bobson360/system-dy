@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -23,6 +23,28 @@ export class PaymentsController {
     @Query('limit') limit?: number,
   ) {
     return this.paymentsService.findByLawyer(lawyerUserId, page, limit);
+  }
+
+  @Get('charges')
+  @Roles(Role.LAWYER)
+  @ApiOperation({ summary: 'Listar cobranças de prioridade do advogado' })
+  findCharges(
+    @CurrentUser('id') lawyerUserId: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+  ) {
+    return this.paymentsService.findChargesByLawyer(lawyerUserId, page, limit, status);
+  }
+
+  @Post('charges/pay-pix')
+  @Roles(Role.LAWYER)
+  @ApiOperation({ summary: 'Pagar cobranças via PIX (mock)' })
+  payPix(
+    @CurrentUser('id') lawyerUserId: string,
+    @Body() dto: { chargeIds: string[] },
+  ) {
+    return this.paymentsService.payChargesPix(lawyerUserId, dto.chargeIds);
   }
 
   @Post(':paymentId/mark-paid')

@@ -7,17 +7,8 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Link from 'next/link'
 import {
-  ArrowLeft,
-  Bot,
-  CheckCircle,
-  XCircle,
-  Clock,
-  AlertCircle,
-  Send,
-  RefreshCw,
-  Pencil,
-  Save,
-  X,
+  ArrowLeft, Bot, CheckCircle, XCircle, Clock, AlertCircle,
+  Send, RefreshCw, Pencil, Save, X, Zap, Ban, RotateCcw,
 } from 'lucide-react'
 import api from '@/lib/api'
 import Topbar from '@/components/dashboard/Topbar'
@@ -30,6 +21,7 @@ interface Demand {
   body: string
   category: string
   status: string
+  isPriority: boolean
   createdAt: string
   client: {
     id: string
@@ -64,26 +56,29 @@ interface Demand {
 const editSchema = z.object({
   title:    z.string().min(5, 'Mínimo 5 caracteres'),
   body:     z.string().min(20, 'Mínimo 20 caracteres'),
-  category: z.enum(['CIVIL', 'CRIMINAL', 'LABOR', 'FAMILY', 'CONSUMER']),
+  category: z.enum(['CIVIL', 'CRIMINAL', 'LABOR', 'FAMILY', 'CONSUMER', 'CORPORATE', 'TAX', 'REAL_ESTATE', 'OTHER']),
 })
 type EditForm = z.infer<typeof editSchema>
 
 const CATEGORY_LABELS: Record<string, string> = {
-  CIVIL: 'Civil', CRIMINAL: 'Criminal', LABOR: 'Trabalhista', FAMILY: 'Família', CONSUMER: 'Consumidor',
+  CIVIL: 'Civil', CRIMINAL: 'Criminal', LABOR: 'Trabalhista', FAMILY: 'Família',
+  CONSUMER: 'Consumidor', CORPORATE: 'Empresarial', TAX: 'Tributário',
+  REAL_ESTATE: 'Imobiliário', OTHER: 'Outros',
 }
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Rascunho', ANALYZING: 'Analisando', PENDING_REVIEW: 'Aguardando revisão',
-  REVIEWED: 'Revisado', REJECTED: 'Rejeitado', COMPLETED: 'Concluído',
+  REVIEWED: 'Revisado', REJECTED: 'Rejeitado', COMPLETED: 'Concluído', CANCELLED: 'Cancelado',
 }
 
 export default function DemandaDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const [demand, setDemand]       = useState<Demand | null>(null)
-  const [loading, setLoading]     = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [editing, setEditing]     = useState(false)
-  const [error, setError]         = useState('')
+  const [demand, setDemand]           = useState<Demand | null>(null)
+  const [loading, setLoading]         = useState(true)
+  const [submitting, setSubmitting]   = useState(false)
+  const [editing, setEditing]         = useState(false)
+  const [error, setError]             = useState('')
   const [actionError, setActionError] = useState('')
+  const [showPriorityConfirm, setShowPriorityConfirm] = useState(false)
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting: saving } } =
     useForm<EditForm>({ resolver: zodResolver(editSchema) })
@@ -103,16 +98,15 @@ export default function DemandaDetailPage() {
 
   useEffect(() => { load() }, [load])
 
-  async function handleSubmitDemand() {
+  async function handleAction(endpoint: string, successMsg?: string) {
     setActionError('')
-    setSubmitting(true)
+    setShowPriorityConfirm(false)
     try {
-      await api.post(`/demands/${id}/submit`)
+      await api.post(`/demands/${id}/${endpoint}`)
+      if (successMsg) setActionError(successMsg) // reuse for success too
       await load()
     } catch (err: any) {
-      setActionError(err.response?.data?.message ?? 'Erro ao submeter demanda.')
-    } finally {
-      setSubmitting(false)
+      setActionError(err.response?.data?.message ?? 'Erro ao executar ação.')
     }
   }
 
@@ -148,7 +142,10 @@ export default function DemandaDetailPage() {
     )
   }
 
-  const canSubmit = demand.status === 'DRAFT'
+  const canSubmit     = demand.status === 'DRAFT'
+  const canCancel     = ['DRAFT', 'ANALYZING', 'PENDING_REVIEW'].includes(demand.status)
+  const canReopen     = ['REJECTED', 'CANCELLED'].includes(demand.status)
+  const canPrioritize = !demand.isPriority && ['DRAFT', 'ANALYZING', 'PENDING_REVIEW'].includes(demand.status)
 
   return (
     <div className="flex flex-col">
@@ -156,15 +153,41 @@ export default function DemandaDetailPage() {
         title={demand.title}
         subtitle={`${CATEGORY_LABELS[demand.category] ?? demand.category} · ${new Date(demand.createdAt).toLocaleDateString('pt-BR')}`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {canSubmit && (
               <button
-                onClick={handleSubmitDemand}
+                onClick={() => { setSubmitting(true); handleAction('submit').finally(() => setSubmitting(false)) }}
                 disabled={submitting}
                 className="flex items-center gap-2 rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-navy-950 hover:bg-gold-400 disabled:opacity-60 transition-colors"
               >
                 {submitting ? <RefreshCw size={14} className="animate-spin" /> : <Send size={14} />}
                 {submitting ? 'Submetendo...' : 'Submeter para análise'}
+              </button>
+            )}
+            {canPrioritize && (
+              <button
+                onClick={() => setShowPriorityConfirm(true)}
+                className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors"
+              >
+                <Zap size={14} /> Priorizar
+              </button>
+            )}
+            {canReopen && (
+              <button
+                onClick={() => handleAction('reopen')}
+                className="flex items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-400 hover:bg-blue-500/20 transition-colors"
+              >
+                <RotateCcw size={14} /> Reabrir
+              </button>
+            )}
+            {canCancel && (
+              <button
+                onClick={() => {
+                  if (confirm('Confirmar cancelamento desta demanda?')) handleAction('cancel')
+                }}
+                className="flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+              >
+                <Ban size={14} /> Cancelar
               </button>
             )}
             {!editing && (
@@ -186,6 +209,29 @@ export default function DemandaDetailPage() {
       />
 
       <div className="flex-1 space-y-6 p-8">
+        {/* Priority confirm banner */}
+        {showPriorityConfirm && (
+          <div className="flex items-center gap-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4">
+            <Zap size={18} className="shrink-0 text-amber-400" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-300">Análise prioritária</p>
+              <p className="text-xs text-amber-400/80">Receba a análise em até 30 min pelo valor adicional de <strong className="text-amber-300">R$ 15,00</strong>. Deseja confirmar?</p>
+            </div>
+            <button
+              onClick={() => handleAction('prioritize')}
+              className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-navy-950 hover:bg-amber-400 transition-colors"
+            >
+              Confirmar
+            </button>
+            <button
+              onClick={() => setShowPriorityConfirm(false)}
+              className="rounded-lg border border-navy-700 px-3 py-2 text-xs text-navy-400 hover:text-white transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
+
         {actionError && (
           <p className="rounded-lg bg-red-500/10 px-4 py-3 text-sm text-red-400">{actionError}</p>
         )}
@@ -241,9 +287,16 @@ export default function DemandaDetailPage() {
                 </form>
               ) : (
                 <>
-                  <div className="mb-4 flex items-center justify-between">
+                  <div className="mb-4 flex items-center gap-2">
                     <h3 className="font-semibold text-white">Descrição</h3>
-                    <StatusBadge status={demand.status} />
+                    {demand.isPriority && (
+                      <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400">
+                        <Zap size={10} /> Prioritária
+                      </span>
+                    )}
+                    <div className="ml-auto">
+                      <StatusBadge status={demand.status} />
+                    </div>
                   </div>
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-navy-300">{demand.body}</p>
                 </>
@@ -384,6 +437,28 @@ export default function DemandaDetailPage() {
                 <div className="flex items-start gap-2">
                   <Clock size={15} className="mt-0.5 shrink-0 text-navy-400" />
                   <p className="text-xs text-navy-400">Aguardando revisão humana.</p>
+                </div>
+              </section>
+            )}
+
+            {demand.status === 'CANCELLED' && (
+              <section className="rounded-xl border border-navy-700 bg-navy-900 p-5">
+                <div className="flex items-start gap-2">
+                  <Ban size={15} className="mt-0.5 shrink-0 text-navy-500" />
+                  <p className="text-xs text-navy-400">
+                    Demanda cancelada. Clique em <strong className="text-white">Reabrir</strong> para retomar como rascunho.
+                  </p>
+                </div>
+              </section>
+            )}
+
+            {demand.status === 'REJECTED' && (
+              <section className="rounded-xl border border-red-500/20 bg-red-500/5 p-5">
+                <div className="flex items-start gap-2">
+                  <XCircle size={15} className="mt-0.5 shrink-0 text-red-400" />
+                  <p className="text-xs text-navy-300">
+                    Demanda rejeitada. Clique em <strong className="text-white">Reabrir</strong> para corrigir e resubmeter.
+                  </p>
                 </div>
               </section>
             )}

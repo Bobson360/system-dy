@@ -30,6 +30,7 @@ enum DemandStatus {
   REVIEWED
   COMPLETED
   REJECTED
+  CANCELLED
 }
 
 enum DemandCategory {
@@ -55,6 +56,12 @@ enum SubscriptionPlan {
   STARTER
   PROFESSIONAL
   ENTERPRISE
+}
+
+enum ChargeStatus {
+  PENDING
+  PAID
+  CANCELLED
 }
 
 enum NotificationType {
@@ -112,9 +119,10 @@ model LawyerProfile {
   planExpiresAt    DateTime?
   isAdimplente     Boolean          @default(true)
 
-  clients  ClientProfile[]
-  demands  Demand[]
-  payments Payment[]
+  clients         ClientProfile[]
+  demands         Demand[]
+  payments        Payment[]
+  priorityCharges PriorityCharge[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -176,10 +184,13 @@ model Demand {
   clientId String
   client   ClientProfile @relation(fields: [clientId], references: [id])
 
-  documents   Document[]
-  aiAnalysis  AiAnalysis?
-  review      Review?
-  statusLogs  DemandStatusLog[]
+  isPriority  Boolean      @default(false)
+
+  documents       Document[]
+  aiAnalysis      AiAnalysis?
+  review          Review?
+  statusLogs      DemandStatusLog[]
+  priorityCharges PriorityCharge[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -242,8 +253,8 @@ model Review {
   demandId String @unique
   demand   Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
 
-  reviewerId String
-  reviewer   ReviewerProfile @relation(fields: [reviewerId], references: [id])
+  reviewerId String?
+  reviewer   ReviewerProfile? @relation(fields: [reviewerId], references: [id])
 
   approved         Boolean  @default(false)
   reviewNotes      String?
@@ -296,6 +307,27 @@ model Payment {
   updatedAt DateTime @updatedAt
 
   @@map("payments")
+}
+
+// ─── Priority Charge ──────────────────────────────────────────────────────────
+
+model PriorityCharge {
+  id       String @id @default(uuid())
+  demandId String
+  demand   Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+
+  lawyerId String
+  lawyer   LawyerProfile @relation(fields: [lawyerId], references: [id])
+
+  amount   Float        @default(15.0)
+  status   ChargeStatus @default(PENDING)
+  pixCode  String?
+  paidAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("priority_charges")
 }
 
 // ─── Notification ─────────────────────────────────────────────────────────────

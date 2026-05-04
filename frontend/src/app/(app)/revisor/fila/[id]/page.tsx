@@ -39,7 +39,7 @@ interface Demand {
     editedRisks: string[]
     editedActions: string[]
     completedAt: string | null
-    reviewer: { user: { firstName: string; lastName: string } }
+    reviewer: { user: { firstName: string; lastName: string } } | null
   } | null
   statusLogs: { id: string; toStatus: string; reason: string | null; createdAt: string }[]
 }
@@ -419,10 +419,12 @@ export default function ReviewDemandPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-navy-400">Revisor</span>
-                  {review ? (
+                  {review?.reviewer ? (
                     <span className="text-xs text-white">
                       {review.reviewer.user.firstName} {review.reviewer.user.lastName}
                     </span>
+                  ) : review ? (
+                    <span className="text-xs text-navy-400">Admin</span>
                   ) : (
                     <span className="text-xs text-navy-600">Não atribuído</span>
                   )}

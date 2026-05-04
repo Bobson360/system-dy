@@ -71,4 +71,25 @@ export class DemandsController {
   submit(@CurrentUser('id') lawyerUserId: string, @Param('demandId') demandId: string) {
     return this.demandsService.submit(lawyerUserId, demandId);
   }
+
+  @Post(':demandId/cancel')
+  @Roles(Role.LAWYER)
+  @ApiOperation({ summary: 'Cancelar demanda' })
+  cancel(@CurrentUser('id') lawyerUserId: string, @Param('demandId') demandId: string) {
+    return this.demandsService.cancel(lawyerUserId, demandId);
+  }
+
+  @Post(':demandId/reopen')
+  @Roles(Role.LAWYER)
+  @ApiOperation({ summary: 'Reabrir demanda rejeitada ou cancelada' })
+  reopen(@CurrentUser('id') lawyerUserId: string, @Param('demandId') demandId: string) {
+    return this.demandsService.reopen(lawyerUserId, demandId);
+  }
+
+  @Post(':demandId/prioritize')
+  @Roles(Role.LAWYER)
+  @ApiOperation({ summary: 'Priorizar demanda (análise em até 30 min por R$ 15,00)' })
+  prioritize(@CurrentUser('id') lawyerUserId: string, @Param('demandId') demandId: string) {
+    return this.demandsService.prioritize(lawyerUserId, demandId);
+  }
 }

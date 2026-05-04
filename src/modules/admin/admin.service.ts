@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserStatus, DemandStatus } from '@prisma/client';
 
@@ -7,6 +7,8 @@ export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getDashboard() {
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
     const [
       totalUsers,
       totalLawyers,
@@ -16,7 +18,8 @@ export class AdminService {
       totalDemands,
       demandsByStatus,
       recentPayments,
-      monthlyRevenue,
+      subscriptionRevenue,
+      priorityRevenue,
       aiStats,
     ] = await Promise.all([
       this.prisma.user.count(),
@@ -35,12 +38,11 @@ export class AdminService {
       }),
       this.prisma.payment.aggregate({
         _sum: { amount: true },
-        where: {
-          status: 'PAID',
-          paidAt: {
-            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-          },
-        },
+        where: { status: 'PAID', paidAt: { gte: monthStart } },
+      }),
+      this.prisma.priorityCharge.aggregate({
+        _sum: { amount: true },
+        where: { status: 'PAID', paidAt: { gte: monthStart } },
       }),
       this.prisma.aiAnalysis.aggregate({
         _count: { id: true },
@@ -48,6 +50,8 @@ export class AdminService {
         _avg: { durationMs: true, confidence: true },
       }),
     ]);
+
+    const monthlyRevenue = (subscriptionRevenue._sum.amount || 0) + (priorityRevenue._sum.amount || 0);
 
     return {
       users: {
@@ -66,7 +70,7 @@ export class AdminService {
       },
       payments: {
         recentPayments,
-        monthlyRevenue: monthlyRevenue._sum.amount || 0,
+        monthlyRevenue,
       },
       ai: {
         totalAnalyses: aiStats._count.id,
@@ -153,6 +157,62 @@ export class AdminService {
     ]);
 
     return { data, total, page, limit };
+  }
+
+  async reviewDemand(
+    adminUserId: string,
+    demandId: string,
+    dto: {
+      approved: boolean;
+      reviewNotes?: string;
+      editedSummary?: string;
+      editedRisks?: string[];
+      editedActions?: string[];
+    },
+  ) {
+    const demand = await this.prisma.demand.findUniqueOrThrow({ where: { id: demandId } });
+    if (demand.status !== DemandStatus.PENDING_REVIEW) {
+      throw new BadRequestException('Demanda não está aguardando revisão.');
+    }
+
+    const newStatus = dto.approved ? DemandStatus.REVIEWED : DemandStatus.REJECTED;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.review.upsert({
+        where: { demandId },
+        create: {
+          demandId,
+          approved: dto.approved,
+          reviewNotes: dto.reviewNotes,
+          editedSummary: dto.editedSummary,
+          editedRisks: dto.editedRisks ?? [],
+          editedActions: dto.editedActions ?? [],
+          completedAt: new Date(),
+        },
+        update: {
+          approved: dto.approved,
+          reviewNotes: dto.reviewNotes,
+          editedSummary: dto.editedSummary,
+          editedRisks: dto.editedRisks ?? [],
+          editedActions: dto.editedActions ?? [],
+          completedAt: new Date(),
+        },
+      });
+
+      await tx.demand.update({ where: { id: demandId }, data: { status: newStatus } });
+
+      await tx.demandStatusLog.create({
+        data: {
+          demandId,
+          fromStatus: DemandStatus.PENDING_REVIEW,
+          toStatus: newStatus,
+          changedById: adminUserId,
+          reason: dto.reviewNotes || (dto.approved ? 'Aprovado pelo admin' : 'Rejeitado pelo admin'),
+        },
+      });
+    });
+
+    return { success: true, status: newStatus };
   }
 
   async getDemandDetail(demandId: string) {

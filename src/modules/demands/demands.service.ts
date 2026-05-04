@@ -124,6 +124,101 @@ export class DemandsService {
     });
   }
 
+  async cancel(lawyerUserId: string, demandId: string) {
+    const demand = await this.prisma.demand.findUnique({ where: { id: demandId } });
+    if (!demand) throw new NotFoundException('Demanda não encontrada.');
+
+    const lawyerProfile = await this.prisma.lawyerProfile.findUnique({ where: { userId: lawyerUserId } });
+    if (demand.lawyerId !== lawyerProfile?.id) throw new ForbiddenException();
+
+    const nonCancellable: DemandStatus[] = [DemandStatus.CANCELLED, DemandStatus.COMPLETED, DemandStatus.REVIEWED];
+    if (nonCancellable.includes(demand.status)) {
+      throw new BadRequestException('Esta demanda não pode ser cancelada.');
+    }
+
+    const updated = await this.prisma.demand.update({
+      where: { id: demandId },
+      data: { status: DemandStatus.CANCELLED },
+    });
+
+    await this.prisma.demandStatusLog.create({
+      data: {
+        demandId,
+        fromStatus: demand.status,
+        toStatus: DemandStatus.CANCELLED,
+        changedById: lawyerUserId,
+        reason: 'Cancelado pelo advogado',
+      },
+    });
+
+    return updated;
+  }
+
+  async reopen(lawyerUserId: string, demandId: string) {
+    const demand = await this.prisma.demand.findUnique({ where: { id: demandId } });
+    if (!demand) throw new NotFoundException('Demanda não encontrada.');
+
+    const lawyerProfile = await this.prisma.lawyerProfile.findUnique({ where: { userId: lawyerUserId } });
+    if (demand.lawyerId !== lawyerProfile?.id) throw new ForbiddenException();
+
+    const reopenable: DemandStatus[] = [DemandStatus.REJECTED, DemandStatus.CANCELLED];
+    if (!reopenable.includes(demand.status)) {
+      throw new BadRequestException('Somente demandas rejeitadas ou canceladas podem ser reabertas.');
+    }
+
+    await this.prisma.review.deleteMany({ where: { demandId } });
+
+    const updated = await this.prisma.demand.update({
+      where: { id: demandId },
+      data: { status: DemandStatus.DRAFT, isPriority: false },
+    });
+
+    await this.prisma.demandStatusLog.create({
+      data: {
+        demandId,
+        fromStatus: demand.status,
+        toStatus: DemandStatus.DRAFT,
+        changedById: lawyerUserId,
+        reason: 'Reaberta pelo advogado',
+      },
+    });
+
+    return updated;
+  }
+
+  async prioritize(lawyerUserId: string, demandId: string) {
+    const demand = await this.prisma.demand.findUnique({ where: { id: demandId } });
+    if (!demand) throw new NotFoundException('Demanda não encontrada.');
+
+    const lawyerProfile = await this.prisma.lawyerProfile.findUnique({ where: { userId: lawyerUserId } });
+    if (demand.lawyerId !== lawyerProfile?.id) throw new ForbiddenException();
+
+    if (demand.isPriority) throw new BadRequestException('Demanda já está priorizada.');
+
+    const nonPrioritizable: DemandStatus[] = [DemandStatus.CANCELLED, DemandStatus.COMPLETED, DemandStatus.REVIEWED, DemandStatus.REJECTED];
+    if (nonPrioritizable.includes(demand.status)) {
+      throw new BadRequestException('Esta demanda não pode ser priorizada.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.demand.update({
+        where: { id: demandId },
+        data: { isPriority: true },
+      });
+
+      const charge = await tx.priorityCharge.create({
+        data: {
+          demandId,
+          lawyerId: lawyerProfile.id,
+          amount: 15.0,
+          pixCode: 'pix@deskyura.com.br',
+        },
+      });
+
+      return { ...updated, charge };
+    });
+  }
+
   async submit(lawyerUserId: string, demandId: string) {
     const demand = await this.prisma.demand.findUnique({ where: { id: demandId } });
     if (!demand) throw new NotFoundException();

@@ -1,10 +1,13 @@
-import { Controller, Get, Post, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { AiAnalysisService } from '../ai-analysis/ai-analysis.service';
+import { PaymentsService } from '../payments/payments.service';
+import { SubmitReviewDto } from '../review/dto/submit-review.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
 
 @ApiTags('Admin')
@@ -16,6 +19,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly aiAnalysisService: AiAnalysisService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   @Get('dashboard')
@@ -73,5 +77,34 @@ export class AdminController {
   @ApiOperation({ summary: 'Disparar análise de IA (mock) para uma demanda' })
   analyzeDemand(@Param('demandId') demandId: string) {
     return this.aiAnalysisService.analyzeMock(demandId);
+  }
+
+  @Post('demands/:demandId/review')
+  @ApiOperation({ summary: 'Revisar demanda (admin) — aprovar ou rejeitar' })
+  reviewDemand(
+    @CurrentUser('id') adminUserId: string,
+    @Param('demandId') demandId: string,
+    @Body() dto: SubmitReviewDto,
+  ) {
+    return this.adminService.reviewDemand(adminUserId, demandId, dto);
+  }
+
+  @Get('charges')
+  @ApiOperation({ summary: 'Listar cobranças de prioridade (admin)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  getCharges(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+  ) {
+    return this.paymentsService.findAllCharges(page, limit, status);
+  }
+
+  @Post('charges/:chargeId/send-email')
+  @ApiOperation({ summary: 'Enviar e-mail de cobrança (mock)' })
+  sendChargeEmail(@Param('chargeId') chargeId: string) {
+    return this.paymentsService.sendChargeEmail(chargeId);
   }
 }

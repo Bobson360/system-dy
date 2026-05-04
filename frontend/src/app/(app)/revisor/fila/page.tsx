@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { ClipboardCheck, CheckCircle2, RefreshCw, ChevronLeft, ChevronRight, Bot } from 'lucide-react'
+import { ClipboardCheck, CheckCircle2, RefreshCw, ChevronLeft, ChevronRight, Bot, Zap } from 'lucide-react'
 import api from '@/lib/api'
 import Topbar from '@/components/dashboard/Topbar'
 
@@ -11,6 +11,7 @@ interface QueueItem {
   title: string
   category: string
   status: string
+  isPriority: boolean
   updatedAt: string
   client: { user: { firstName: string; lastName: string } }
   lawyer: { user: { firstName: string; lastName: string } }
@@ -37,13 +38,18 @@ export default function FilaPage() {
   const [loading, setLoading] = useState(true)
   const limit = 20
 
+  const [error, setError] = useState('')
+
   const load = useCallback(async (p = 1) => {
     setLoading(true)
+    setError('')
     try {
       const { data } = await api.get(`/review/queue?page=${p}&limit=${limit}`)
       setItems(data.data)
       setTotal(data.total)
       setPage(p)
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Erro ao carregar fila.')
     } finally {
       setLoading(false)
     }
@@ -69,6 +75,9 @@ export default function FilaPage() {
       />
 
       <div className="flex-1 p-8">
+        {error && (
+          <p className="mb-4 rounded-lg bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>
+        )}
         {loading ? (
           <div className="space-y-2">
             {[...Array(8)].map((_, i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-navy-800" />)}
@@ -85,7 +94,7 @@ export default function FilaPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-navy-800">
-                    {['Demanda', 'Categoria', 'Cliente', 'Advogado', 'IA', 'Aguardando', ''].map((h) => (
+                    {['Demanda', 'Categoria', 'Cliente', 'Advogado', 'IA', 'Aguardando', 'Prio', ''].map((h) => (
                       <th key={h} className="px-5 pb-3 pt-4 text-left text-xs font-medium text-navy-500">{h}</th>
                     ))}
                   </tr>
@@ -123,6 +132,13 @@ export default function FilaPage() {
                       </td>
                       <td className="px-5 py-3.5 text-xs text-navy-500">
                         {waitingLabel(d.updatedAt)}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        {d.isPriority && (
+                          <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400 whitespace-nowrap">
+                            <Zap size={10} /> Prio
+                          </span>
+                        )}
                       </td>
                       <td className="px-5 py-3.5">
                         <Link

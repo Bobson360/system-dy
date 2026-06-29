@@ -123,6 +123,7 @@ model LawyerProfile {
   demands         Demand[]
   payments        Payment[]
   priorityCharges PriorityCharge[]
+  workflows       Workflow[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -328,6 +329,59 @@ model PriorityCharge {
   updatedAt DateTime @updatedAt
 
   @@map("priority_charges")
+}
+
+// ─── Workflow ─────────────────────────────────────────────────────────────────
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum WorkflowRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Workflow {
+  id          String         @id @default(uuid())
+  lawyerId    String
+  lawyer      LawyerProfile  @relation(fields: [lawyerId], references: [id])
+
+  name        String
+  description String?
+  status      WorkflowStatus @default(DRAFT)
+  schedule    String?
+  nodes       Json           @default("[]")
+  edges       Json           @default("[]")
+
+  executions  WorkflowExecution[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("workflows")
+}
+
+model WorkflowExecution {
+  id         String            @id @default(uuid())
+  workflowId String
+  workflow   Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  status     WorkflowRunStatus @default(PENDING)
+  input      Json?
+  output     Json?
+  logs       Json              @default("[]")
+  error      String?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@map("workflow_executions")
 }
 
 // ─── Notification ─────────────────────────────────────────────────────────────

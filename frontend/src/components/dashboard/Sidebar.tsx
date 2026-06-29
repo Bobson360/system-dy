@@ -7,7 +7,7 @@ import { logout } from '@/lib/auth'
 import {
   LayoutDashboard, Users, FileText, ClipboardCheck,
   CreditCard, Settings, LogOut, Scale, Bell,
-  UserCheck, AlertTriangle,
+  UserCheck, AlertTriangle, GitBranch,
 } from 'lucide-react'
 
 interface NavItem {
@@ -37,10 +37,11 @@ function getNavItems(role: string, pendingCount = 0): NavItem[] {
       ]
     case 'LAWYER':
       return [
-        { label: 'Dashboard',  href: '/advogado/dashboard', icon: <LayoutDashboard size={18} /> },
-        { label: 'Demandas',   href: '/advogado/demandas',  icon: <FileText size={18} /> },
-        { label: 'Clientes',   href: '/advogado/clientes',  icon: <Users size={18} /> },
-        { label: 'Pagamentos', href: '/advogado/pagamentos',icon: <CreditCard size={18} /> },
+        { label: 'Dashboard',  href: '/advogado/dashboard',  icon: <LayoutDashboard size={18} /> },
+        { label: 'Demandas',   href: '/advogado/demandas',   icon: <FileText size={18} /> },
+        { label: 'Clientes',   href: '/advogado/clientes',   icon: <Users size={18} /> },
+        { label: 'Pagamentos', href: '/advogado/pagamentos', icon: <CreditCard size={18} /> },
+        { label: 'Workflows',  href: '/advogado/workflows',  icon: <GitBranch size={18} /> },
       ]
     case 'REVIEWER':
       return [

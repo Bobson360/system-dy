@@ -13,6 +13,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { DocumentsModule } from './modules/documents/documents.module';
+import { WorkflowsModule } from './modules/workflows/workflows.module';
 import appConfig from './config/app.config';
 import jwtConfig from './config/jwt.config';
 
@@ -41,6 +42,7 @@ import jwtConfig from './config/jwt.config';
     PaymentsModule,
     AdminModule,
     DocumentsModule,
+    WorkflowsModule,
   ],
 })
 export class AppModule {}

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkflowDto } from './dto/create-workflow.dto';
 import { UpdateWorkflowDto } from './dto/update-workflow.dto';
+import { Workflow } from '@prisma/client';
 
 @Injectable()
 export class WorkflowsService {
@@ -40,9 +41,7 @@ export class WorkflowsService {
     const lawyer = await this.getLawyer(userId);
     const workflow = await this.prisma.workflow.findFirst({
       where: { id, lawyerId: lawyer.id },
-      include: {
-        executions: { orderBy: { startedAt: 'desc' }, take: 10 },
-      },
+      include: { executions: { orderBy: { startedAt: 'desc' }, take: 10 } },
     });
     if (!workflow) throw new NotFoundException();
     return workflow;
@@ -78,9 +77,55 @@ export class WorkflowsService {
     const lawyer = await this.getLawyer(userId);
     const workflow = await this.prisma.workflow.findFirst({ where: { id, lawyerId: lawyer.id } });
     if (!workflow) throw new NotFoundException();
+    return this.runGraph(workflow, input);
+  }
 
+  async getExecutions(userId: string, workflowId: string) {
+    const lawyer = await this.getLawyer(userId);
+    const workflow = await this.prisma.workflow.findFirst({ where: { id: workflowId, lawyerId: lawyer.id } });
+    if (!workflow) throw new NotFoundException();
+    return this.prisma.workflowExecution.findMany({
+      where: { workflowId },
+      orderBy: { startedAt: 'desc' },
+      take: 20,
+    });
+  }
+
+  // ── Endpoints públicos ──────────────────────────────────────────────────────
+
+  async getPublicForm(workflowId: string) {
+    const workflow = await this.prisma.workflow.findUnique({
+      where: { id: workflowId },
+      select: { id: true, name: true, nodes: true, status: true },
+    });
+    if (!workflow) throw new NotFoundException();
+
+    const nodes = (workflow.nodes as any[]) ?? [];
+    const formNode = nodes.find((n) => n.data?.nodeType === 'INPUT_FORM');
+    const config = formNode?.data?.config ?? {};
+
+    return {
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      formTitle: config.formTitle ?? workflow.name,
+      formDescription: config.formDescription ?? null,
+      fields: (config.fields ?? []) as any[],
+      accessLevel: config.accessLevel ?? 'LINK',
+      isActive: workflow.status === 'ACTIVE',
+    };
+  }
+
+  async submitForm(workflowId: string, formData: Record<string, any>) {
+    const workflow = await this.prisma.workflow.findUnique({ where: { id: workflowId } });
+    if (!workflow) throw new NotFoundException();
+    return this.runGraph(workflow, { formData, submittedAt: new Date().toISOString() });
+  }
+
+  // ── Engine de execução ─────────────────────────────────────────────────────
+
+  private async runGraph(workflow: Workflow, input: Record<string, any>) {
     const execution = await this.prisma.workflowExecution.create({
-      data: { workflowId: id, status: 'RUNNING', input, logs: [] },
+      data: { workflowId: workflow.id, status: 'RUNNING', input, logs: [] },
     });
 
     try {
@@ -94,13 +139,14 @@ export class WorkflowsService {
         adj[edge.source].push(edge.target);
       }
 
-      const triggerNode = nodes.find((n) =>
-        String(n.data?.nodeType ?? '').startsWith('TRIGGER'),
-      );
-      if (!triggerNode) throw new Error('Nenhum nó de trigger encontrado no fluxo');
+      const startNode =
+        nodes.find((n) => String(n.data?.nodeType ?? '').startsWith('TRIGGER')) ??
+        nodes.find((n) => n.data?.nodeType === 'INPUT_FORM');
+
+      if (!startNode) throw new Error('Nenhum nó de início encontrado no fluxo');
 
       const visited = new Set<string>();
-      const queue = [triggerNode.id as string];
+      const queue = [startNode.id as string];
       let context: Record<string, any> = { ...input };
 
       while (queue.length > 0) {
@@ -138,17 +184,6 @@ export class WorkflowsService {
     }
   }
 
-  async getExecutions(userId: string, workflowId: string) {
-    const lawyer = await this.getLawyer(userId);
-    const workflow = await this.prisma.workflow.findFirst({ where: { id: workflowId, lawyerId: lawyer.id } });
-    if (!workflow) throw new NotFoundException();
-    return this.prisma.workflowExecution.findMany({
-      where: { workflowId },
-      orderBy: { startedAt: 'desc' },
-      take: 20,
-    });
-  }
-
   private async executeNode(node: any, context: Record<string, any>): Promise<Record<string, any>> {
     const nodeType: string = node.data?.nodeType ?? '';
     const config: any = node.data?.config ?? {};
@@ -156,35 +191,34 @@ export class WorkflowsService {
     switch (nodeType) {
       case 'TRIGGER_MANUAL':
         return { triggered: true, triggeredAt: new Date().toISOString() };
-
       case 'TRIGGER_SCHEDULE':
         return { triggered: true, schedule: config.schedule };
-
       case 'TRIGGER_DEMAND_CREATED':
-        return { triggered: true, demandId: context.demandId };
-
+        return { triggered: true, demandId: context.demandId, category: config.category };
       case 'TRIGGER_DEMAND_STATUS':
-        return { triggered: true, targetStatus: config.status };
+        return { triggered: true, fromStatus: config.fromStatus, targetStatus: config.status };
 
       case 'INPUT_FORM':
-        return context.formData ?? {};
-
-      case 'INPUT_DEMAND_DATA':
-        return {
-          demandTitle: context.demandTitle ?? 'Demanda #001',
-          demandCategory: context.demandCategory ?? 'CIVIL',
-          demandBody: context.demandBody ?? 'Conteúdo da demanda',
-        };
+        return { formReceived: true, ...context.formData };
+      case 'INPUT_DEMAND_DATA': {
+        const fields: string[] = config.fields ?? ['title', 'body', 'category'];
+        const result: Record<string, any> = {};
+        for (const f of fields) result[f] = context[f] ?? `[${f}]`;
+        return result;
+      }
 
       case 'CONDITION': {
         const fieldValue = context[config.field];
         const op = config.operator ?? 'equals';
         let conditionResult = false;
-        if (op === 'equals') conditionResult = String(fieldValue) === String(config.value);
-        else if (op === 'not_equals') conditionResult = String(fieldValue) !== String(config.value);
-        else if (op === 'contains') conditionResult = String(fieldValue).includes(String(config.value));
-        else if (op === 'gt') conditionResult = Number(fieldValue) > Number(config.value);
-        else if (op === 'lt') conditionResult = Number(fieldValue) < Number(config.value);
+        if (op === 'equals')       conditionResult = String(fieldValue) === String(config.value);
+        else if (op === 'not_equals')   conditionResult = String(fieldValue) !== String(config.value);
+        else if (op === 'contains')     conditionResult = String(fieldValue).includes(String(config.value));
+        else if (op === 'not_contains') conditionResult = !String(fieldValue).includes(String(config.value));
+        else if (op === 'gt')           conditionResult = Number(fieldValue) > Number(config.value);
+        else if (op === 'lt')           conditionResult = Number(fieldValue) < Number(config.value);
+        else if (op === 'is_empty')     conditionResult = !fieldValue || fieldValue === '';
+        else if (op === 'is_not_empty') conditionResult = !!fieldValue && fieldValue !== '';
         return { conditionResult };
       }
 
@@ -194,22 +228,32 @@ export class WorkflowsService {
           aiRisks: ['Risco de prescrição em 3 anos', 'Possível insolvência do réu'],
           aiActions: ['Notificação extrajudicial imediata', 'Ação monitória'],
           aiConfidence: 0.87,
+          aiFocusAreas: config.focusAreas ?? [],
+        };
+      case 'AI_SUMMARIZE':
+        return {
+          summary: '[Mock] Resumo: caso de cobrança com alta probabilidade de êxito.',
+          format: config.format ?? 'paragraph',
         };
 
-      case 'AI_SUMMARIZE':
-        return { summary: '[Mock] Resumo: caso de cobrança com alta probabilidade de êxito.' };
-
       case 'ACTION_NOTIFY':
-        return { notified: true, message: config.message ?? 'Fluxo executado com sucesso.' };
-
+        return {
+          notified: true,
+          recipients: config.recipients ?? ['LAWYER'],
+          channel: config.channel ?? 'in_app',
+          message: config.message ?? 'Fluxo executado com sucesso.',
+        };
       case 'ACTION_UPDATE_STATUS':
-        return { statusUpdated: true, newStatus: config.status ?? 'ANALYZING' };
-
+        return {
+          statusUpdated: true,
+          newStatus: config.status ?? 'ANALYZING',
+          reason: config.reason,
+        };
       case 'ACTION_ASSIGN_REVIEWER':
-        return { reviewerAssigned: true };
+        return { reviewerAssigned: true, mode: config.mode ?? 'auto' };
 
       case 'ACCESS_CONTROL':
-        return { accessConfigured: true, roles: config.roles ?? [] };
+        return { accessConfigured: true, roles: config.roles ?? [], resultVisibility: config.resultVisibility };
 
       default:
         return {};
